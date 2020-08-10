@@ -1,4 +1,4 @@
-;(in-package :dpANS3-parser)
+(in-package :dpANS3-parser)
 
 
 (defconstant +escape-category+ 0)
@@ -57,11 +57,11 @@
         (setf (gethash char catcode-table) (acons level value assignments))))))
 
 
-(defun begin (tokenizer)
+(defun tokenizer-begin (tokenizer)
   (incf (tokenizer-level tokenizer)))
 
 
-(defun end (tokenizer)
+(defun tokenizer-end (tokenizer)
   (with-slots (level catcode-table)
               tokenizer
     (maphash (lambda (char assignments)
@@ -99,7 +99,7 @@
         (catcode tokenizer #\$)       +math-shift-category+
         (catcode tokenizer #\a #\z)   +letter-category+
         (catcode tokenizer #\A #\Z)   +letter-category+)
-  (begin tokenizer))
+  (tokenizer-begin tokenizer))
 
 
 (defun read-char-and-catcode (tokenizer stream)
@@ -178,17 +178,32 @@
         (return (make-parameter :level count :index weight))))))
 
 
-(defun read-token (tokenizer stream)
+(defun read-group (tokenizer stream)
+  (do (result tail
+       (token (read-token tokenizer stream t) (read-token tokenizer stream t)))
+      ((eql :end token) result)
+    (unless token
+      (error "Group ended prematurely"))
+    (cond
+      (tail
+        (setf (cdr tail) (cons token nil))
+        (setq tail (cdr tail)))
+      (t
+        (setq tail (cons token nil))
+        (setq result tail)))))
+
+
+(defun read-token (tokenizer stream &optional end-allowed)
   (multiple-value-bind (char catcode)
                        (read-char-and-catcode tokenizer stream)
     (cond
       ((equal +escape-category+ catcode)
         (read-escape-sequence tokenizer stream))
       ((equal +begin-category+ catcode)
-        (begin tokenizer)
-        :begin)
+        (read-group tokenizer stream))
       ((equal +end-category+ catcode)
-        (end tokenizer)
+        (unless end-allowed
+          (error "Misplaced end token"))
         :end)
       ((equal +math-shift-category+ catcode)
         :math-shift)
