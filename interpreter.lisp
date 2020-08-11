@@ -11,9 +11,12 @@
    (macros
      :reader interpreter-macros
      :initform (make-hash-table :test #'equal))
-   (token-queue
-     :accessor interpreter-token-queue
-     :initform nil)
+   (token-sequence
+     :accessor interpreter-token-sequence
+     :initform (make-array 32 :fill-pointer 0 :adjustable t))
+   (token-position
+     :accessor interpreter-token-position
+     :initform 0)
    (stream-stack
      :accessor interpreter-stream-stack
      :initform nil)))
@@ -31,29 +34,26 @@
               (acons level function macros))))))
 
 
+(defun evaluate-token (interpreter)
+  (incf (interpreter-token-position interpreter)))
+
+
 (defun evaluate (interpreter)
-  (with-slots (tokenizer token-queue stream-stack)
-  interpreter
-  (prog (results tail)
-  (cond
-    ((typep (car token-queue) 'control-sequence)
-      (get)
-    ((and token-queue tail)
-      (setf (cdr tail) (cons (pop token-queue) nil))
-      (setq tail (cdr tail)))
-    (token-queue
-      ()
-
-    ((null stream-stack)
-      results)
-    (t
-      (let ((token (read-token tokenizer (car stream-stack))))
-        (if token
-          (push token token-queue)
-          (pop stream-stack))))
-
-  (unless token-queue
-
+  (with-slots (tokenizer token-sequence token-position stream-stack)
+              interpreter
+    (tagbody
+     repeat
+      (cond
+        ((< token-position (length token-sequence))
+          (evaluate-token interpreter)
+          (go repeat))
+        (stream-stack
+          (let ((token (read-token tokenizer (car stream-stack))))
+            (if token
+              (vector-push-extend token token-sequence)
+              (pop stream-stack)))
+          (go repeat))))
+    token-sequence))
 
 
 (defun tex-load (interpreter stream))
