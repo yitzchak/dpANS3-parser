@@ -1,6 +1,23 @@
 (in-package :dpANS3-parser)
 
 
+(defstruct tex-macro
+  frozen
+  definitions)
+
+
+(defun do-define-tex-macro (macro function &optional global)
+  (unless (tex-macro-frozen macro)
+    (let ((level (if global 0 (interpreter-level interpreter)))
+           (pair (assoc level (tex-macro-definitions macro))))
+      (if pair
+        (setf (cdr pair) function)
+        (setf (tex-macro-definitions macro)
+              (if global
+                (append (tex-macro-definitions macro) (list (cons 0 function)))
+                (acons level function (tex-macro-definitions macro))))))))
+
+
 (defclass interpreter ()
   ((level
      :accessor interpreter-level
@@ -22,16 +39,28 @@
      :initform nil)))
 
 
-(defun def-tex-macro (interpreter control-sequence function &optional global)
-  (let* ((level (if global 0 (interpreter-level interpreter)))
-         (macros (gethash control-sequence (interpreter-macros interpreter)))
-         (pair (assoc level macros)))
-    (if pair
-      (setf (cdr pair) function)
+(defun define-tex-macro (interpreter control-sequence function &optional global)
+  (do-define-tex-macro
+    (or (gethash control-sequence (interpreter-macros interpreter))
       (setf (gethash control-sequence (interpreter-macros interpreter))
-            (if global
-              (append macros (list (cons 0 function)))
-              (acons level function macros))))))
+            (make-tex-macro)))
+          function global))
+
+
+(defun freeze-tex-macro (interpreter control-sequence)
+  (let ((macro (gethash control-sequence (interpreter-macros interpreter))))
+    (if macro
+      (setf (tex-macro-frozen macro) t)
+      (setf (gethash control-sequence (interpreter-macros interpreter))
+            (make-tex-macro :frozen t)))))
+
+
+(defun thaw-tex-macro (interpreter control-sequence)
+  (let ((macro (gethash control-sequence (interpreter-macros interpreter))))
+    (if macro
+      (setf (tex-macro-frozen macro) nil)
+      (setf (gethash control-sequence (interpreter-macros interpreter))
+            (make-tex-macro)))))
 
 
 (defun evaluate-token (interpreter)
