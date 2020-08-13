@@ -8,7 +8,7 @@
 
 (defun do-define-tex-macro (macro function &optional global)
   (unless (tex-macro-frozen macro)
-    (let ((level (if global 0 (interpreter-level interpreter)))
+    (let* ((level (if global 0 (interpreter-level interpreter)))
            (pair (assoc level (tex-macro-definitions macro))))
       (if pair
         (setf (cdr pair) function)
@@ -86,3 +86,9 @@
 
 
 (defun tex-load (interpreter stream))
+
+
+(defmethod initialize-instance :after ((instance interpreter) &rest initargs &key &allow-other-keys)
+  (do-external-symbols (sym 'dpANS3-parser/core)
+    (when (fboundp sym)
+      (define-tex-macro instance (make-control-sequence :value (symbol-name sym)) (symbol-function sym) t))))

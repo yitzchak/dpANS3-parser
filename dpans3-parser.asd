@@ -6,4 +6,5 @@
   :depends-on ()
   :components ((:file "package")
                (:file "tokenizer")
-               (:file "interpreter")))
+               (:file "interpreter")
+               (:file "core")))
