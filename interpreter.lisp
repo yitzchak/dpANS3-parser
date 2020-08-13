@@ -28,12 +28,15 @@
    (macros
      :reader interpreter-macros
      :initform (make-hash-table :test #'equal))
-   (token-sequence
-     :accessor interpreter-token-sequence
-     :initform (make-array 32 :fill-pointer 0 :adjustable t))
-   (token-position
-     :accessor interpreter-token-position
-     :initform 0)
+   (tokens
+     :accessor interpreter-tokens
+     :initform nil)
+   (token-head
+     :accessor interpreter-token-head
+     :initform nil)
+   (token-tail
+     :accessor interpreter-token-tail
+     :initform nil)
    (stream-stack
      :accessor interpreter-stream-stack
      :initform nil)))
@@ -63,29 +66,62 @@
             (make-tex-macro)))))
 
 
-(defun evaluate-token (interpreter)
-  (incf (interpreter-token-position interpreter)))
+(defun fill-token-sequence (interpreter)
+  (with-slots (tokenizer token-head token-tail stream-stack)
+              interpreter
+    (prog (token)
+     repeat
+      (unless (or token-head
+                  (null stream-stack))
+        (setq token (read-token tokenizer (car stream-stack)))
+        (when token
+          (setf token-head (cons token nil))
+          (when token-tail
+            (setf (cdr token-tail) token-head))
+          (return))
+        (close (pop stream-stack))
+        (go repeat)))))
+
+
+(defun peek-token (interpreter)
+  (fill-token-sequence interpreter)
+  (car (interpreter-token-head interpreter)))
+
+
+(defun pop-token (interpreter)
+  (fill-token-sequence interpreter)
+  (with-slots (token-head token-tail tokens)
+              interpreter
+    (prog1
+      (car token-head)
+      (setf token-head (cdr token-head))
+      (unless tokens
+        (setf tokens token-head))
+      (when token-tail
+        (setf (cdr token-tail) token-head)))))
 
 
 (defun evaluate (interpreter)
-  (with-slots (tokenizer token-sequence token-position stream-stack)
+  (with-slots (token-head token-tail tokens)
               interpreter
-    (tagbody
-     repeat
-      (cond
-        ((< token-position (length token-sequence))
-          (evaluate-token interpreter)
-          (go repeat))
-        (stream-stack
-          (let ((token (read-token tokenizer (car stream-stack))))
-            (if token
-              (vector-push-extend token token-sequence)
-              (pop stream-stack)))
-          (go repeat))))
-    token-sequence))
+    (do ((token (peek-token interpreter) (peek-token interpreter)))
+        ((null token) tokens)
+      (typecase token
+        (list
+          (setf token-head (nconc token token-head))
+          (unless tokens
+            (setf tokens token-head))
+          (when token-tail
+            (setf (cdr token-tail) token-head)))
+        (otherwise
+          (setf token-tail token-head)
+          (setf token-head (cdr token-head))
+          (unless tokens
+            (setf tokens token-head)))))))
 
 
-(defun tex-load (interpreter stream))
+(defun tex-input (interpreter path)
+  (push (open path) (interpreter-stream-stack interpreter)))
 
 
 (defmethod initialize-instance :after ((instance interpreter) &rest initargs &key &allow-other-keys)
