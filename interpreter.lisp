@@ -28,56 +28,51 @@
    (macros
      :reader interpreter-macros
      :initform (make-hash-table :test #'equal))
-   (tokens
-     :accessor interpreter-tokens
+   (token-stack
+     :accessor interpreter-token-stack
      :initform nil)
-   (token-head
-     :accessor interpreter-token-head
-     :initform nil)
-   (token-tail
-     :accessor interpreter-token-tail
-     :initform nil)
+   (output-stack
+     :accessor interpreter-output-stack
+     :initform (list (make-array 64 :adjustable t :fill-pointer 0)))
    (stream-stack
      :accessor interpreter-stream-stack
      :initform nil)))
 
 
-(defun define-tex-macro (interpreter control-sequence function &optional global)
+(defun define-tex-macro (interpreter name function &optional global)
   (do-define-tex-macro
-    (or (gethash control-sequence (interpreter-macros interpreter))
-      (setf (gethash control-sequence (interpreter-macros interpreter))
+    (or (gethash name (interpreter-macros interpreter))
+      (setf (gethash name (interpreter-macros interpreter))
             (make-tex-macro)))
           function global))
 
 
-(defun freeze-tex-macro (interpreter control-sequence)
-  (let ((macro (gethash control-sequence (interpreter-macros interpreter))))
+(defun freeze-tex-macro (interpreter name)
+  (let ((macro (gethash name (interpreter-macros interpreter))))
     (if macro
       (setf (tex-macro-frozen macro) t)
-      (setf (gethash control-sequence (interpreter-macros interpreter))
+      (setf (gethash name (interpreter-macros interpreter))
             (make-tex-macro :frozen t)))))
 
 
-(defun thaw-tex-macro (interpreter control-sequence)
+(defun thaw-tex-macro (interpreter name)
   (let ((macro (gethash control-sequence (interpreter-macros interpreter))))
     (if macro
       (setf (tex-macro-frozen macro) nil)
-      (setf (gethash control-sequence (interpreter-macros interpreter))
+      (setf (gethash name (interpreter-macros interpreter))
             (make-tex-macro)))))
 
 
 (defun fill-token-sequence (interpreter)
-  (with-slots (tokenizer token-head token-tail stream-stack)
+  (with-slots (tokenizer token-stack stream-stack)
               interpreter
     (prog (token)
      repeat
-      (unless (or token-head
+      (unless (or token-stack
                   (null stream-stack))
         (setq token (read-token tokenizer (car stream-stack)))
         (when token
-          (setf token-head (cons token nil))
-          (when token-tail
-            (setf (cdr token-tail) token-head))
+          (push token token-stack)
           (return))
         (close (pop stream-stack))
         (go repeat)))))
@@ -85,39 +80,54 @@
 
 (defun peek-token (interpreter)
   (fill-token-sequence interpreter)
-  (car (interpreter-token-head interpreter)))
+  (car (interpreter-token-stack interpreter)))
 
 
 (defun pop-token (interpreter)
   (fill-token-sequence interpreter)
-  (with-slots (token-head token-tail tokens)
+  (pop (interpreter-token-stack interpreter)))
+
+
+(defun push-output-stack (interpreter)
+  (let ((value (make-array 64 :adjustable t :fill-pointer 0)))
+    (push value (interpreter-output-stack interpreter))
+    value))
+
+
+(defun pop-output-stack (interpreter)
+  (pop (interpreter-output-stack interpreter)))
+
+
+(defun evaluate-control-sequence (interpreter token)
+  (let ((macro (gethash (control-sequence-value token) (interpreter-macros interpreter))))
+    (when macro
+      (let ((fun (cdar (tex-macro-definitions macro))))
+        (when fun
+          (funcall fun interpreter))))))
+
+
+(defun evaluate-token (interpreter)
+  (with-slots (token-stack output-stack)
               interpreter
-    (prog1
-      (car token-head)
-      (setf token-head (cdr token-head))
-      (unless tokens
-        (setf tokens token-head))
-      (when token-tail
-        (setf (cdr token-tail) token-head)))))
+    (do ((token (pop-token interpreter) (pop-token interpreter)))
+        ((null token))
+      (cond
+        ((typep token 'control-sequence)
+          (evaluate-control-sequence interpreter token))
+        ((listp token)
+          (setf token-stack (nconc token token-stack)))
+        (t
+          (vector-push-extend token (car output-stack))
+          (return))))))
 
 
 (defun evaluate (interpreter)
-  (with-slots (token-head token-tail tokens)
+  (with-slots (token-stack output-stack)
               interpreter
     (do ((token (peek-token interpreter) (peek-token interpreter)))
-        ((null token) tokens)
-      (typecase token
-        (list
-          (setf token-head (nconc token token-head))
-          (unless tokens
-            (setf tokens token-head))
-          (when token-tail
-            (setf (cdr token-tail) token-head)))
-        (otherwise
-          (setf token-tail token-head)
-          (setf token-head (cdr token-head))
-          (unless tokens
-            (setf tokens token-head)))))))
+        ((null token))
+      (evaluate-token interpreter))
+    (car (last output-stack))))
 
 
 (defun tex-input (interpreter path)
@@ -127,4 +137,4 @@
 (defmethod initialize-instance :after ((instance interpreter) &rest initargs &key &allow-other-keys)
   (do-external-symbols (sym 'dpANS3-parser/core)
     (when (fboundp sym)
-      (define-tex-macro instance (make-control-sequence :value (symbol-name sym)) (symbol-function sym) t))))
+      (define-tex-macro instance (symbol-name sym) (symbol-function sym) t))))
