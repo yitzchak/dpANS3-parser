@@ -86,17 +86,19 @@
           (go repeat))))))
 
 
-(defun write-token (interpeter token)
-  (vector-push-extend token (car (interpreter-frame-stack interpreter))))
+(defun write-token (interpreter token)
+  (vector-push-extend token (frame-output-sequence (car (interpreter-frame-stack interpreter)))))
 
 
 (defun peek-token (interpreter)
-  (fill-token-sequence interpreter)
+  (unless (cdr (interpreter-frame-stack interpreter))
+    (fill-token-sequence interpreter))
   (car (frame-token-stack (car (interpreter-frame-stack interpreter)))))
 
 
 (defun pop-token (interpreter)
-  (fill-token-sequence interpreter)
+  (unless (cdr (interpreter-frame-stack interpreter))
+    (fill-token-sequence interpreter))
   (pop (frame-token-stack (car (interpreter-frame-stack interpreter)))))
 
 
@@ -118,6 +120,36 @@
           (funcall fun interpreter))))))
 
 
+(defun assemble-text (text-sequence)
+  (format t "~S~%" text-sequence)
+  (let (result text tk)
+    (dotimes (position (length text-sequence) (nreverse result))
+      (setf tk (elt text-sequence position))
+        (cond
+          ((characterp tk)
+          (unless text
+            (setf text (make-array 64 :adjustable t :fill-pointer 0 :element-type 'character))
+            (push text result))
+          (vector-push-extend tk text))
+          (t
+            (setf text nil)
+            (push tk result))))))
+
+
+(defun collect-text (interpreter type)
+  (with-slots (output-sequence)
+              (car (interpreter-frame-stack interpreter))
+    (let ((pos (position-if (lambda (token)
+                              (and (listp token)
+                                   (eql type (getf token :type))))
+                            output-sequence :from-end t)))
+      (when pos
+        (setf (cdr (last (elt output-sequence pos)))
+              (list :text
+                    (assemble-text (subseq output-sequence (1+ pos)))))
+        (setf (fill-pointer output-sequence) (1+ pos))))))
+
+
 (defun evaluate-token (interpreter)
   (with-slots (token-stack output-sequence)
               (car (interpreter-frame-stack interpreter))
@@ -128,19 +160,26 @@
           (evaluate-control-sequence interpreter token))
         ((listp token)
           (setf token-stack (nconc token token-stack)))
+        ((typep token 'comment))
         (t
           (vector-push-extend token output-sequence)
           (return))))))
 
 
 (defun evaluate (interpreter)
-  (with-slots (token-stack output-sequence)
-              (car (interpreter-frame-stack interpreter))
-    (do ((token (peek-token interpreter) (peek-token interpreter)))
-        ((null token))
-      (evaluate-token interpreter))
-    (frame-output-sequence (pop (interpreter-frame-stack interpreter)))))
+  (with-slots (frame-stack)
+              interpreter
+    (with-slots (token-stack output-sequence)
+                (car frame-stack)
+      (do ((token (peek-token interpreter) (peek-token interpreter)))
+          ((null token))
+        (evaluate-token interpreter))
+      (assemble-text (frame-output-sequence (pop frame-stack))))))
 
+
+(defun push-and-evaluate (interpreter)
+  (push-frame-stack interpreter)
+  (evaluate interpreter))
 
 (defun tex-input (interpreter path)
   (push (open path) (interpreter-stream-stack interpreter)))

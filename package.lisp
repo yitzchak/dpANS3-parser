@@ -10,7 +10,9 @@
     #:push-frame-stack
     #:pop-frame-stack
     #:evaluate-token
+    #:collect-text
     #:evaluate
+    #:push-and-evaluate
     #:freeze-tex-macro
     #:thaw-tex-macro))
 
@@ -19,4 +21,7 @@
   (:use :cl :dpANS3-parser)
   (:export
     #:|beginchapter|
+    #:|beginSection|
+    #:|endchapter|
+    #:|endSection|
     #:|def|))
