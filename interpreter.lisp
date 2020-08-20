@@ -18,6 +18,15 @@
                 (acons level function (tex-macro-definitions macro))))))))
 
 
+(defclass frame ()
+  ((token-stack
+     :accessor frame-token-stack
+     :initform nil)
+   (output-sequence
+     :accessor frame-output-sequence
+     :initform (make-array 64 :adjustable t :fill-pointer 0))))
+
+
 (defclass interpreter ()
   ((level
      :accessor interpreter-level
@@ -28,12 +37,9 @@
    (macros
      :reader interpreter-macros
      :initform (make-hash-table :test #'equal))
-   (token-stack
-     :accessor interpreter-token-stack
-     :initform nil)
-   (output-stack
-     :accessor interpreter-output-stack
-     :initform (list (make-array 64 :adjustable t :fill-pointer 0)))
+   (frame-stack
+     :accessor interpreter-frame-stack
+     :initform (list (make-instance 'frame)))
    (stream-stack
      :accessor interpreter-stream-stack
      :initform nil)))
@@ -64,38 +70,44 @@
 
 
 (defun fill-token-sequence (interpreter)
-  (with-slots (tokenizer token-stack stream-stack)
+  (with-slots (tokenizer frame-stack stream-stack)
               interpreter
-    (prog (token)
-     repeat
-      (unless (or token-stack
-                  (null stream-stack))
-        (setq token (read-token tokenizer (car stream-stack)))
-        (when token
-          (push token token-stack)
-          (return))
-        (close (pop stream-stack))
-        (go repeat)))))
+    (with-slots (token-stack)
+                (car frame-stack)
+      (prog (token)
+       repeat
+        (unless (or token-stack
+                    (null stream-stack))
+          (setq token (read-token tokenizer (car stream-stack)))
+          (when token
+            (push token token-stack)
+            (return))
+          (close (pop stream-stack))
+          (go repeat))))))
+
+
+(defun write-token (interpeter token)
+  (vector-push-extend token (car (interpreter-frame-stack interpreter))))
 
 
 (defun peek-token (interpreter)
   (fill-token-sequence interpreter)
-  (car (interpreter-token-stack interpreter)))
+  (car (frame-token-stack (car (interpreter-frame-stack interpreter)))))
 
 
 (defun pop-token (interpreter)
   (fill-token-sequence interpreter)
-  (pop (interpreter-token-stack interpreter)))
+  (pop (frame-token-stack (car (interpreter-frame-stack interpreter)))))
 
 
-(defun push-output-stack (interpreter)
-  (let ((value (make-array 64 :adjustable t :fill-pointer 0)))
-    (push value (interpreter-output-stack interpreter))
-    value))
+(defun push-frame-stack (interpreter)
+  (let ((frame (make-instance 'frame)))
+    (push (pop-token interpreter) (frame-token-stack frame))
+    (push frame (interpreter-frame-stack interpreter))))
 
 
-(defun pop-output-stack (interpreter)
-  (pop (interpreter-output-stack interpreter)))
+(defun pop-frame-stack (interpreter)
+  (pop (interpreter-frame-stack interpreter)))
 
 
 (defun evaluate-control-sequence (interpreter token)
@@ -107,8 +119,8 @@
 
 
 (defun evaluate-token (interpreter)
-  (with-slots (token-stack output-stack)
-              interpreter
+  (with-slots (token-stack output-sequence)
+              (car (interpreter-frame-stack interpreter))
     (do ((token (pop-token interpreter) (pop-token interpreter)))
         ((null token))
       (cond
@@ -117,17 +129,17 @@
         ((listp token)
           (setf token-stack (nconc token token-stack)))
         (t
-          (vector-push-extend token (car output-stack))
+          (vector-push-extend token output-sequence)
           (return))))))
 
 
 (defun evaluate (interpreter)
-  (with-slots (token-stack output-stack)
-              interpreter
+  (with-slots (token-stack output-sequence)
+              (car (interpreter-frame-stack interpreter))
     (do ((token (peek-token interpreter) (peek-token interpreter)))
         ((null token))
       (evaluate-token interpreter))
-    (car (last output-stack))))
+    (frame-output-sequence (pop (interpreter-frame-stack interpreter)))))
 
 
 (defun tex-input (interpreter path)

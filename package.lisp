@@ -3,12 +3,12 @@
   (:export
     #:define-tex-macro
     #:interpreter
-    #:interpreter-output-stack
-    #:interpreter-token-stack
+    #:interpreter-output-sequence
     #:peek-token
     #:pop-token
-    #:push-output-stack
-    #:pop-output-stack
+    #:write-token
+    #:push-frame-stack
+    #:pop-frame-stack
     #:evaluate-token
     #:evaluate
     #:freeze-tex-macro

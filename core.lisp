@@ -6,8 +6,7 @@
 
 (defun |beginchapter| (interpreter)
   (let ((result (list :type :chapter)))
-    (setf (getf result :number) (push-output-stack interpreter))
-    (evaluate-token interpreter)
-    (pop-output-stack interpreter)
-    (vector-push-extend result (car (interpreter-output-stack interpreter)))))
+    (push-frame-stack interpreter)
+    (setf (getf result :number) (evaluate interpreter))
+    (write-token interpreter result)))
 
