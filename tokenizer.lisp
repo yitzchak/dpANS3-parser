@@ -175,6 +175,7 @@
         (go repeat))
       (let ((weight (digit-char-p char)))
         (when weight
+          (read-char stream)
           (return (make-parameter :level count :index weight)))
         (return #\#)))))
 

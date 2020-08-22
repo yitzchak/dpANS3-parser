@@ -5,11 +5,32 @@
   (if (listp body)
     (mapcar (lambda (x)
               (user-apply args x)) body)
-    body))
+    (or (gethash body args)
+        body)))
 
 
 (defun user-macro (interpreter args body)
-  (push-token interpreter (user-apply nil body)))
+  (prog ((values (make-hash-table :test #'equalp))
+         (tail args)
+         arg param token)
+   repeat
+    (setf arg (car tail))
+    (setf token (pop-token interpreter))
+    (cond
+      ((null token)
+        (error "EOF"))
+      ((typep arg 'parameter)
+        (setf param arg)
+        (setf (gethash param values) (list token))
+        (setf tail (cdr tail)))
+      ((equalp arg token)
+        (setf tail (cdr tail)))
+      (t
+        (setf (gethash param values)
+              (nconc (gethash param values) (list token)))))
+    (when tail
+      (go repeat))
+    (push-token interpreter (user-apply values body))))
 
 
 (defun |def| (interpreter)
@@ -19,7 +40,7 @@
     (when (listp token)
       (define-tex-macro interpreter name
                         (lambda (interpreter)
-                          (funcall #'user-macro interpreter args token)))
+                          (funcall #'user-macro interpreter (nreverse args) token)))
       (return))
     (push token args)
     (go repeat)))

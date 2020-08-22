@@ -26,6 +26,7 @@
     #:+parameter-category+
     #:peek-token
     #:pop-frame-stack
+    #:parameter
     #:pop-token
     #:push-and-evaluate
     #:push-frame-stack
