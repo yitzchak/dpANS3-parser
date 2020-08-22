@@ -168,14 +168,15 @@
   (prog ((count 1))
    repeat
     (multiple-value-bind (char catcode)
-                         (read-char-and-catcode tokenizer stream)
+                         (peek-char-and-catcode tokenizer stream)
       (when (equal +parameter-category+ catcode)
         (incf count)
+        (read-char stream)
         (go repeat))
       (let ((weight (digit-char-p char)))
-        (unless weight
-          (error "Expected a digit in parameter ~A" char))
-        (return (make-parameter :level count :index weight))))))
+        (when weight
+          (return (make-parameter :level count :index weight)))
+        (return #\#)))))
 
 
 (defun read-group (tokenizer stream)
@@ -221,5 +222,8 @@
         (make-control-sequence :value (string char)))
       ((equal +comment-category+ catcode)
         (read-comment tokenizer stream))
+      ((equal +space-category+ catcode)
+        (eat-space tokenizer stream)
+        :space)
       (t
         char))))

@@ -1,12 +1,17 @@
 (in-package :dpANS3-parser)
 
 
+(defun block-token-p (token)
+  (and (listp token)
+       (member (getf token :type) '(:chapter :paragraph :section :subsection) :test #'eql)))
+
+
 (defstruct tex-macro
   frozen
   definitions)
 
 
-(defun do-define-tex-macro (macro function &optional global)
+(defun do-define-tex-macro (interpreter macro function &optional global)
   (unless (tex-macro-frozen macro)
     (let* ((level (if global 0 (interpreter-level interpreter)))
            (pair (assoc level (tex-macro-definitions macro))))
@@ -45,24 +50,38 @@
      :initform nil)))
 
 
-(defun define-tex-macro (interpreter name function &optional global)
-  (do-define-tex-macro
-    (or (gethash name (interpreter-macros interpreter))
-      (setf (gethash name (interpreter-macros interpreter))
-            (make-tex-macro)))
-          function global))
+(defun macro-name (tag)
+  (cond
+    ((symbolp tag)
+      (symbol-name tag))
+    ((typep tag 'control-sequence)
+      (control-sequence-value tag))
+    (t
+      tag)))
 
 
-(defun freeze-tex-macro (interpreter name)
-  (let ((macro (gethash name (interpreter-macros interpreter))))
+(defun define-tex-macro (interpreter tag function &optional global)
+  (let ((name (macro-name tag)))
+    (do-define-tex-macro
+      interpreter
+      (or (gethash name (interpreter-macros interpreter))
+          (setf (gethash name (interpreter-macros interpreter))
+                (make-tex-macro)))
+      function global)))
+
+
+(defun freeze-tex-macro (interpreter tag)
+  (let* ((name (macro-name tag))
+         (macro (gethash name (interpreter-macros interpreter))))
     (if macro
       (setf (tex-macro-frozen macro) t)
       (setf (gethash name (interpreter-macros interpreter))
             (make-tex-macro :frozen t)))))
 
 
-(defun thaw-tex-macro (interpreter name)
-  (let ((macro (gethash control-sequence (interpreter-macros interpreter))))
+(defun thaw-tex-macro (interpreter tag)
+  (let* ((name (macro-name tag))
+         (macro (gethash control-sequence (interpreter-macros interpreter))))
     (if macro
       (setf (tex-macro-frozen macro) nil)
       (setf (gethash name (interpreter-macros interpreter))
@@ -102,9 +121,31 @@
   (pop (frame-token-stack (car (interpreter-frame-stack interpreter)))))
 
 
-(defun push-frame-stack (interpreter)
+(defun push-token (interpreter token)
+  (with-slots (token-stack)
+              (car (interpreter-frame-stack interpreter))
+    (if (listp token)
+      (setf token-stack (nconc token token-stack))
+      (push token token-stack))))
+
+
+(defun push-frame-stack (interpreter &optional (parameter-type :single))
   (let ((frame (make-instance 'frame)))
-    (push (pop-token interpreter) (frame-token-stack frame))
+    (case parameter-type
+      (:single
+        (push (pop-token interpreter) (frame-token-stack frame)))
+      (:line-or-group
+        (do ((token (peek-token interpreter) (peek-token interpreter)))
+            ((or (null token)
+                 (typep token 'comment)))
+          (cond
+            ((eql :eol token)
+              (pop-token interpreter)
+              (return))
+            (t
+              (push token (frame-token-stack frame))
+              (pop-token interpreter))))
+        (setf (frame-token-stack frame) (nreverse (frame-token-stack frame)))))
     (push frame (interpreter-frame-stack interpreter))))
 
 
@@ -121,31 +162,68 @@
 
 
 (defun assemble-text (text-sequence)
-  (format t "~S~%" text-sequence)
-  (let (result text tk)
+  (let (result paragraph text tk eol)
     (dotimes (position (length text-sequence) (nreverse result))
       (setf tk (elt text-sequence position))
-        (cond
-          ((characterp tk)
+      (cond
+        ((block-token-p tk)
+          (setf paragraph nil)
+          (setf text nil)
+          (setf eol nil)
+          (push tk result))
+        ((and eol
+              (eql :space tk)))
+        ((or (characterp tk)
+             (eql :space tk))
           (unless text
             (setf text (make-array 64 :adjustable t :fill-pointer 0 :element-type 'character))
-            (push text result))
-          (vector-push-extend tk text))
-          (t
-            (setf text nil)
-            (push tk result))))))
+            (unless paragraph
+              (setf paragraph (list :type :paragraph :children nil))
+              (push paragraph result))
+            (setf (getf paragraph :children)
+                  (nconc (getf paragraph :children) (list text))))
+          (when eol
+            (vector-push-extend #\newline text)
+            (setf eol nil))
+          (vector-push-extend (if (eql :space tk) #\space tk) text))
+        ((and eol
+              (eql :eol tk))
+          (setf eol nil)
+          (setf text nil)
+          (setf paragraph nil))
+        ((and text
+              (eql :eol tk))
+          (setf eol t))
+        ((eql :eol tk))
+        (t
+          (setf text nil)
+          (unless paragraph
+            (setf paragraph (list :type :paragraph :children nil))
+            (push paragraph result))
+          (setf (getf paragraph :children)
+                (nconc (getf paragraph :children) (list tk))))))))
 
 
-(defun collect-text (interpreter type)
+(defun find-previous-by-type (interpreter &rest types)
   (with-slots (output-sequence)
               (car (interpreter-frame-stack interpreter))
     (let ((pos (position-if (lambda (token)
                               (and (listp token)
-                                   (eql type (getf token :type))))
+                                   (member (getf token :type) types :test #'eql)))
+                            output-sequence :from-end t)))
+      (values (when pos (elt output-sequence pos)) pos))))
+
+
+(defun collect-text (interpreter &rest types)
+  (with-slots (output-sequence)
+              (car (interpreter-frame-stack interpreter))
+    (let ((pos (position-if (lambda (token)
+                              (and (listp token)
+                                   (member (getf token :type) types :test #'eql)))
                             output-sequence :from-end t)))
       (when pos
         (setf (cdr (last (elt output-sequence pos)))
-              (list :text
+              (list :children
                     (assemble-text (subseq output-sequence (1+ pos)))))
         (setf (fill-pointer output-sequence) (1+ pos))))))
 
@@ -177,8 +255,8 @@
       (assemble-text (frame-output-sequence (pop frame-stack))))))
 
 
-(defun push-and-evaluate (interpreter)
-  (push-frame-stack interpreter)
+(defun push-and-evaluate (interpreter &optional (parameter-type :single))
+  (push-frame-stack interpreter parameter-type)
   (evaluate interpreter))
 
 (defun tex-input (interpreter path)
@@ -188,4 +266,18 @@
 (defmethod initialize-instance :after ((instance interpreter) &rest initargs &key &allow-other-keys)
   (do-external-symbols (sym 'dpANS3-parser/core)
     (when (fboundp sym)
-      (define-tex-macro instance (symbol-name sym) (symbol-function sym) t))))
+      (define-tex-macro instance sym (symbol-function sym) t)
+      (freeze-tex-macro instance sym))))
+
+
+(defun begin-group (interpreter &rest catcodes)
+  (with-slots (tokenizer)
+              interpreter
+    (tokenizer-begin tokenizer)
+    (do ((head catcodes (cddr head)))
+        ((null head))
+      (set-catcode tokenizer (car head) (cadr head)))))
+
+
+(defun end-group (interpreter)
+  (tokenizer-end (interpreter-tokenizer interpreter)))

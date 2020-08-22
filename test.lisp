@@ -4,4 +4,5 @@
 
 (dpans3-parser::tex-input z "dpANS3/chap-1.tex")
 
-(pprint (dpans3-parser::evaluate z))
+(with-open-file (s "test.sexpr" :direction :output :if-exists :supersede)
+  (pprint (dpans3-parser::evaluate z) s))
