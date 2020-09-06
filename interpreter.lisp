@@ -3,12 +3,17 @@
 
 (defun block-token-p (token)
   (and (listp token)
-       (member (getf token :type) '(:chapter :paragraph :section :subsection) :test #'eql)))
+       (member (getf token :type) '(:chapter :code :paragraph :section :subsection) :test #'eql)))
 
 
 (defstruct tex-macro
   frozen
   definitions)
+
+
+(defstruct styled-char
+  style
+  char)
 
 
 (defun do-define-tex-macro (interpreter macro function &optional global)
@@ -21,6 +26,13 @@
               (if global
                 (append (tex-macro-definitions macro) (list (cons 0 function)))
                 (acons level function (tex-macro-definitions macro))))))))
+
+
+(defclass state ()
+  ((style
+     :accessor state-style
+     :initform nil
+     :initarg :style)))
 
 
 (defclass frame ()
@@ -36,6 +48,9 @@
   ((level
      :accessor interpreter-level
      :initform 1)
+   (state-stack
+     :accessor interpreter-state-stack
+     :initform (list (make-instance 'state)))
    (tokenizer
      :reader interpreter-tokenizer
      :initform (make-instance 'tokenizer))
@@ -48,6 +63,31 @@
    (stream-stack
      :accessor interpreter-stream-stack
      :initform nil)))
+
+
+(defgeneric sanitize (form)
+  (:method (form)
+    form))
+
+
+(defmethod sanitize ((form string))
+  (replace-all (string (code-char #x201c)) "``"
+               (replace-all (string (code-char #x201d)) "''"
+                            (replace-all (string (code-char #x2013)) "--"
+                                         (replace-all (string (code-char #x2014)) "---"
+                                                      form)))))
+
+
+(defmethod sanitize ((form list))
+  (do (result
+       (tail form (cddr tail)))
+      ((null tail) (nreverse result))
+    (let ((val (if (listp (cadr tail))
+                 (mapcar #'sanitize (cadr tail))
+                 (sanitize (cadr tail)))))
+      (when val
+        (push (car tail) result)
+        (push val result)))))
 
 
 (defun macro-name (tag)
@@ -125,7 +165,10 @@
   (with-slots (token-stack)
               (car (interpreter-frame-stack interpreter))
     (if (listp token)
-      (setf token-stack (nconc token token-stack))
+      (setf token-stack (nconc (list (make-control-sequence :value "begingroup"))
+                               token
+                               (list (make-control-sequence :value "endgroup"))
+                               token-stack))
       (push token token-stack))))
 
 
@@ -161,35 +204,78 @@
           (funcall fun interpreter))))))
 
 
+(defun replace-all (new-seq old-seq seq)
+  (prog ((start 0) end result)
+   repeat
+    (setf end (search old-seq seq :start2 start))
+    (when end
+      (setf result (concatenate 'string result (subseq seq start end) new-seq))
+      (setf start (+ end (length old-seq)))
+      (go repeat))
+    (return (concatenate 'string result (subseq seq start)))))
+
+
 (defun assemble-text (text-sequence)
-  (let (result paragraph text tk eol)
+  (let (result paragraph text tk eol style)
     (dotimes (position (length text-sequence) (nreverse result))
       (setf tk (elt text-sequence position))
       (cond
+        ((eql :italic-correction tk))
         ((block-token-p tk)
           (setf paragraph nil)
           (setf text nil)
+          (setf style nil)
           (setf eol nil)
           (push tk result))
         ((and eol
               (eql :space tk)))
+        ((and (typep tk 'styled-char)
+              (equalp style (styled-char-style tk))
+              text)
+          (when eol
+            (vector-push-extend #\space text)
+            (setf eol nil))
+          (vector-push-extend (styled-char-char tk) text))
+        ((typep tk 'styled-char)
+          (when eol
+            (unless text
+              (setf text (make-array 64 :adjustable t :fill-pointer 0 :element-type 'character))
+              (unless paragraph
+                (setf paragraph (list :type :paragraph :children nil))
+                (push paragraph result))
+              (setf (getf paragraph :children)
+                    (nconc (getf paragraph :children) (list text))))
+            (vector-push-extend #\space text)
+            (setf eol nil))
+          (setf text (make-array 64 :adjustable t :fill-pointer 0 :element-type 'character))
+          (unless paragraph
+            (setf paragraph (list :type :paragraph :children nil))
+            (push paragraph result))
+          (setf (getf paragraph :children)
+                (nconc (getf paragraph :children)
+                       (list (list :type :span :style (styled-char-style tk) :children (list text)))))
+          (setf style (styled-char-style tk))
+          (vector-push-extend (styled-char-char tk) text))
         ((or (characterp tk)
              (eql :space tk))
-          (unless text
+          (unless (and text (not style))
             (setf text (make-array 64 :adjustable t :fill-pointer 0 :element-type 'character))
+            (setf style nil)
             (unless paragraph
               (setf paragraph (list :type :paragraph :children nil))
               (push paragraph result))
             (setf (getf paragraph :children)
                   (nconc (getf paragraph :children) (list text))))
           (when eol
-            (vector-push-extend #\newline text)
+            (unless (eql :space tk)
+              (vector-push-extend #\space text))
             (setf eol nil))
           (vector-push-extend (if (eql :space tk) #\space tk) text))
         ((and eol
               (eql :eol tk))
           (setf eol nil)
           (setf text nil)
+          (setf style nil)
           (setf paragraph nil))
         ((and text
               (eql :eol tk))
@@ -197,6 +283,7 @@
         ((eql :eol tk))
         (t
           (setf text nil)
+          (setf style nil)
           (unless paragraph
             (setf paragraph (list :type :paragraph :children nil))
             (push paragraph result))
@@ -239,6 +326,9 @@
         ((listp token)
           (setf token-stack (nconc token token-stack)))
         ((typep token 'comment))
+        ((and (interpreter-style interpreter)
+              (characterp token))
+          (vector-push-extend (make-styled-char :char token :style (interpreter-style interpreter)) output-sequence))
         (t
           (vector-push-extend token output-sequence)
           (return))))))
@@ -252,7 +342,7 @@
       (do ((token (peek-token interpreter) (peek-token interpreter)))
           ((null token))
         (evaluate-token interpreter))
-      (assemble-text (frame-output-sequence (pop frame-stack))))))
+      (mapcar #'sanitize (assemble-text (frame-output-sequence (pop frame-stack)))))))
 
 
 (defun push-and-evaluate (interpreter &optional (parameter-type :single))
@@ -270,9 +360,20 @@
       (freeze-tex-macro instance sym))))
 
 
+(defun interpreter-style (interpreter)
+  (state-style (car (interpreter-state-stack interpreter))))
+
+
+(defun (setf interpreter-style) (new-value interpreter)
+  (setf (state-style (car (interpreter-state-stack interpreter)))
+        new-value))
+
+
 (defun begin-group (interpreter &rest catcodes)
-  (with-slots (tokenizer)
+  (with-slots (tokenizer state-stack)
               interpreter
+    (push (make-instance 'state :style (state-style (car state-stack)))
+          state-stack)
     (tokenizer-begin tokenizer)
     (do ((head catcodes (cddr head)))
         ((null head))
@@ -280,4 +381,5 @@
 
 
 (defun end-group (interpreter)
-  (tokenizer-end (interpreter-tokenizer interpreter)))
+  (tokenizer-end (interpreter-tokenizer interpreter))
+  (pop (interpreter-state-stack interpreter)))

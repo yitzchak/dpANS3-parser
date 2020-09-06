@@ -73,7 +73,7 @@
 
 (defmethod (setf catcode) (new-value tokenizer char &optional end-char)
   (if end-char
-    (dotimes (offset (- (char-code end-char) (char-code char)))
+    (dotimes (offset (1+ (- (char-code end-char) (char-code char))))
       (set-catcode tokenizer (code-char (+ offset (char-code char))) new-value))
     (set-catcode tokenizer char new-value)))
 
@@ -138,18 +138,22 @@
 (defun read-escape-sequence (tokenizer stream)
   (multiple-value-bind (char catcode)
                        (read-char-and-catcode tokenizer stream)
-    (if (equal +letter-category+ catcode)
-      (prog ((result (make-array 32 :initial-element char :fill-pointer 1 :adjustable t :element-type 'character)))
-       repeat
-        (multiple-value-bind (char catcode)
-                             (peek-char-and-catcode tokenizer stream)
-          (unless (equal +letter-category+ catcode)
-            (eat-space tokenizer stream)
-            (return (make-control-sequence :value result)))
-          (read-char stream)
-          (vector-push-extend char result)
-          (go repeat)))
-      char)))
+    (cond
+      ((equal +letter-category+ catcode)
+        (prog ((result (make-array 32 :initial-element char :fill-pointer 1 :adjustable t :element-type 'character)))
+         repeat
+          (multiple-value-bind (char catcode)
+                               (peek-char-and-catcode tokenizer stream)
+            (unless (equal +letter-category+ catcode)
+              (eat-space tokenizer stream)
+              (return (make-control-sequence :value result)))
+            (read-char stream)
+            (vector-push-extend char result)
+            (go repeat))))
+      ((char= #\/ char)
+        :italic-correction)
+      (t
+        char))))
 
 
 (defun read-comment (tokenizer stream)

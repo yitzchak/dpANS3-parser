@@ -14,6 +14,9 @@
          (tail args)
          arg param token)
    repeat
+    (unless tail
+      (push-token interpreter (user-apply values body))
+      (return))
     (setf arg (car tail))
     (setf token (pop-token interpreter))
     (cond
@@ -28,9 +31,7 @@
       (t
         (setf (gethash param values)
               (nconc (gethash param values) (list token)))))
-    (when tail
-      (go repeat))
-    (push-token interpreter (user-apply values body))))
+    (go repeat)))
 
 
 (defun |def| (interpreter)
@@ -111,8 +112,11 @@
 
 
 (defun |input| (interpreter)
+  (begin-group interpreter)
+  (setf (interpreter-style interpreter) nil)
   (let ((name (string-trim '(#\Space #\Tab #\Newline) (car (getf (car (push-and-evaluate interpreter :line-or-group)) :children)))))
-    (unless (member name '("setup") :test #'string=)
+    (end-group interpreter)
+    (unless (member name '("setup-aux" "setup-document" "setup-tables" "setup-figures" "setup-sections" "setup-options") :test #'string=)
       (tex-input interpreter
                  (make-pathname :directory '(:relative "dpANS3")
                                 :name name
@@ -148,6 +152,11 @@
   (write-token interpreter (code-char #xa0)))
 
 
+(defun |par| (interpreter)
+  (write-token interpreter :eol)
+  (write-token interpreter :eol))
+
+
 (defun |b| (interpreter)
   (write-token interpreter
                (list :type :bold
@@ -159,6 +168,7 @@
                (list :type :italic
                      :children (getf (car (push-and-evaluate interpreter)) :children))))
 
+
 (defun |j| (interpreter)
   (write-token interpreter
                (list :type :italic
@@ -169,3 +179,34 @@
   (write-token interpreter
                (list :type :fixed
                      :children (getf (car (push-and-evaluate interpreter)) :children))))
+
+
+(defun |relax| (interpreter))
+
+
+(defun |begingroup| (interpreter)
+  (begin-group interpreter))
+
+
+(defun |endgroup| (interpreter)
+  (end-group interpreter))
+
+
+(defun |it| (interpreter)
+  (setf (interpreter-style interpreter) (list :italic)))
+
+
+(defun |sl| (interpreter)
+  (setf (interpreter-style interpreter) (list :oblique)))
+
+
+(defun |rm| (interpreter)
+  (setf (interpreter-style interpreter) nil))
+
+
+(defun |bf| (interpreter)
+  (setf (interpreter-style interpreter) (list :bold)))
+
+
+(defun |tt| (interpreter)
+  (setf (interpreter-style interpreter) (list :teletype)))

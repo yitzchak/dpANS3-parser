@@ -19,6 +19,7 @@
     #:+ignored-category+
     #:interpreter
     #:interpreter-output-sequence
+    #:interpreter-style
     #:+invalid-category+
     #:+letter-category+
     #:+math-shift-category+
@@ -42,24 +43,31 @@
 (defpackage #:dpANS3-parser/core
   (:use :cl :dpANS3-parser)
   (:export
+    #:|~|
+;    #:|b|
     #:|beginchapter|
+    #:|begingroup|
     #:|beginSection|
     #:|beginsubSection|
     #:|beginsubsubsection|
     #:|beginsubsubsubsection|
+    #:|code|
     #:|def|
     #:|DefineSection|
-    #:|code|
-    #:|endcode|
     #:|endchapter|
-    #:|~|
-    #:|b|
-    #:|i|
-    #:|j|
-    #:|f|
+    #:|endcode|
+    #:|endgroup|
     #:|endSection|
     #:|endsubSection|
     #:|endsubsubsection|
     #:|endsubsubsubsection|
-    #:|input|))
+;    #:|f|
+;    #:|i|
+    #:|it|
+    #:|bf|
+    #:|rm|
+    #:|input|
+;    #:|j|
+    #:|par|
+    #:|relax|))
 
