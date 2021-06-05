@@ -256,16 +256,26 @@
                        (list (list :type :span :style (styled-char-style tk) :children (list text)))))
           (setf style (styled-char-style tk))
           (vector-push-extend (styled-char-char tk) text))
+        ((and style
+              (eql :space tk))
+          (vector-push-extend #\space text))
         ((or (characterp tk)
              (eql :space tk))
           (unless (and text (not style))
-            (setf text (make-array 64 :adjustable t :fill-pointer 0 :element-type 'character))
-            (setf style nil)
-            (unless paragraph
-              (setf paragraph (list :type :paragraph :children nil))
-              (push paragraph result))
-            (setf (getf paragraph :children)
-                  (nconc (getf paragraph :children) (list text))))
+            (let ((new-text (make-array 64 :adjustable t :fill-pointer 0 :element-type 'character)))
+              (when (and text
+                         style
+                         (not (zerop (length text)))
+                         (char= #\space (char text (1- (length text)))))
+                (vector-pop text)
+                (vector-push-extend #\space new-text))
+              (setf text new-text)
+              (setf style nil)
+              (unless paragraph
+                (setf paragraph (list :type :paragraph :children nil))
+                (push paragraph result))
+              (setf (getf paragraph :children)
+                    (nconc (getf paragraph :children) (list text)))))
           (when eol
             (unless (eql :space tk)
               (vector-push-extend #\space text))
